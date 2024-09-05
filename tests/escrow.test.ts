@@ -148,6 +148,98 @@ describe("escrow", () => {
   // Pick a random ID for the new offer.
   const offerId = getRandomBigNumber();
 
+  const makeOfferTx = async (
+    maker: Keypair,
+    offerId: BN,
+    offeredTokenMint: PublicKey,
+    offeredAmount: BN,
+    wantedTokenMint: PublicKey,
+    wantedAmount: BN
+  ): Promise<{
+    offerAddress: PublicKey;
+    vaultAddress: PublicKey;
+  }> => {
+    const transactionSignature = await program.methods
+      .makeOffer(offerId, offeredAmount, wantedAmount)
+      .accounts({
+        maker: maker.publicKey,
+        tokenMintA: offeredTokenMint,
+        tokenMintB: wantedTokenMint,
+        // As the `token_program` account is specified as
+        //
+        //   pub token_program: Interface<'info, TokenInterface>,
+        //
+        // the client library needs us to provide the specific program address
+        // explicitly.
+        //
+        // This is unlike the `associated_token_program` or the `system_program`
+        // account addresses, that are specified in the program IDL, as they are
+        // expected to reference the same programs for all the `makeOffer`
+        // invocations.
+        tokenProgram: TOKEN_PROGRAM,
+      })
+      .signers([maker])
+      .rpc();
+
+    await confirmTransaction(connection, transactionSignature);
+
+    // Both `offer` address and the `vault` address accounts are computed based
+    // on the other provided account addresses, and so we do not need to provide
+    // them explicitly in the `makeOffer()` account call above.  But we compute
+    // them here and return for convenience.
+
+    const [offerAddress, _offerBump] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("offer"),
+        maker.publicKey.toBuffer(),
+        offerId.toArrayLike(Buffer, "le", 8),
+      ],
+      program.programId
+    );
+
+    const vaultAddress = getAssociatedTokenAddressSync(
+      offeredTokenMint,
+      offerAddress,
+      true,
+      TOKEN_PROGRAM
+    );
+
+    return { offerAddress, vaultAddress };
+  };
+
+  const takeOfferTx = async (
+    offerAddress: PublicKey,
+    taker: Keypair
+  ): Promise<void> => {
+    // `accounts` argument debugging tool.  Should be part of Anchor really.
+    //
+    // type FlatType<T> = T extends object
+    //   ? { [K in keyof T]: FlatType<T[K]> }
+    //   : T;
+    //
+    // type AccountsArgs = FlatType<
+    //   Parameters<
+    //     ReturnType<
+    //       Program<Escrow>["methods"]["takeOffer"]
+    //     >["accounts"]
+    //   >
+    // >;
+
+    const transactionSignature = await program.methods
+      .takeOffer()
+      .accounts({
+        taker: taker.publicKey,
+        offer: offerAddress,
+        // See note in the `makeOfferTx` on why this program address is provided
+        // and the rest are not.
+        tokenProgram: TOKEN_PROGRAM,
+      })
+      .signers([taker])
+      .rpc();
+
+    await confirmTransaction(connection, transactionSignature);
+  };
+
   // Creates Alice and Bob accounts, 2 token mints, and associated token
   // accounts for both tokens for both users.
   beforeAll(async () => {
@@ -208,105 +300,9 @@ describe("escrow", () => {
   //   global.console = jestConsole;
   // });
 
-  const makeOfferTx = async (
-    maker: Keypair,
-    offerId: BN,
-    offeredTokenMint: PublicKey,
-    offeredAmount: BN,
-    wantedTokenMint: PublicKey,
-    wantedAmount: BN
-  ): Promise<{
-    offerAddress: PublicKey;
-    vaultAddress: PublicKey;
-  }> => {
-    const transactionSignature = await program.methods
-      .makeOffer(offerId, offeredAmount, wantedAmount)
-      .accounts({
-        maker: maker.publicKey,
-        tokenMintA: offeredTokenMint,
-        tokenMintB: wantedTokenMint,
-        // As the `token_program` account is specified as
-        //
-        //   pub token_program: Interface<'info, TokenInterface>,
-        //
-        // the client library needs us to provide the specific program address
-        // explicitly.
-        //
-        // This is unlike the `associated_token_program` or the `system_program`
-        // account addresses, that are specified in the program IDL, as they are
-        // expected to reference the same programs for all the `makeOffer`
-        // invocations.
-        tokenProgram: TOKEN_PROGRAM,
-      })
-      .signers([maker])
-      .rpc();
-
-    await confirmTransaction(connection, transactionSignature);
-
-    // Both `offer` address and the `vault` address accounts are computed based
-    // on the other provided account addresses, and so we do not need to provide
-    // them explicitly in the `makeOffer()` account call above.  But we compute
-    // them here and return for convenience.
-
-    const [offerAddress, _offerBump] = PublicKey.findProgramAddressSync(
-      [
-        Buffer.from("offer"),
-        maker.publicKey.toBuffer(),
-        offerId.toArrayLike(Buffer, "le", 8),
-      ],
-      program.programId
-    );
-
-    const vaultAddress = getAssociatedTokenAddressSync(
-      offeredTokenMint,
-      offerAddress,
-      true,
-      TOKEN_PROGRAM
-    );
-
-    return { offerAddress, vaultAddress };
-  };
-
-  //todo: uncomment this line
-
-  // const takeOfferTx = async (
-  //   offerAddress: PublicKey,
-  //   taker: Keypair
-  // ): Promise<void> => {
-  //   // `accounts` argument debugging tool.  Should be part of Anchor really.
-  //   //
-  //   // type FlatType<T> = T extends object
-  //   //   ? { [K in keyof T]: FlatType<T[K]> }
-  //   //   : T;
-  //   //
-  //   // type AccountsArgs = FlatType<
-  //   //   Parameters<
-  //   //     ReturnType<
-  //   //       Program<Escrow>["methods"]["takeOffer"]
-  //   //     >["accounts"]
-  //   //   >
-  //   // >;
-
-  //   const transactionSignature = await program.methods
-  //     .takeOffer()
-  //     .accounts({
-  //       taker: taker.publicKey,
-  //       offer: offerAddress,
-  //       // See note in the `makeOfferTx` on why this program address is provided
-  //       // and the rest are not.
-  //       tokenProgram: TOKEN_PROGRAM,
-  //     })
-  //     .signers([taker])
-  //     .rpc();
-
-  //   await confirmTransaction(connection, transactionSignature);
-  // };
-
   test("Offer created by Alice, vault holds the offer tokens", async () => {
     const offeredUsdc = new BN(10_000_000);
     const wantedWif = new BN(100_000_000);
-
-    const getTokenBalance = getTokenBalanceOn(connection);
 
     const { offerAddress, vaultAddress } = await makeOfferTx(
       alice,
@@ -316,6 +312,8 @@ describe("escrow", () => {
       wifMint.publicKey,
       wantedWif
     );
+
+    const getTokenBalance = getTokenBalanceOn(connection);
 
     expect(await getTokenBalance(aliceUsdcAccount)).toEqual(new BN(90_000_000));
     expect(await getTokenBalance(vaultAddress)).toEqual(offeredUsdc);
@@ -352,9 +350,7 @@ describe("escrow", () => {
     expect(await getTokenBalance(bobUsdcAccount)).toEqual(new BN(20_000_000));
     expect(await getTokenBalance(bobWifAccount)).toEqual(new BN(300_000_000));
 
-    //todo: uncomment this line
-
-    // await takeOfferTx(offerAddress, bob);
+    await takeOfferTx(offerAddress, bob);
 
     expect(await getTokenBalance(aliceUsdcAccount)).toEqual(new BN(90_000_000));
     expect(await getTokenBalance(aliceWifAccount)).toEqual(new BN(105_000_000));
